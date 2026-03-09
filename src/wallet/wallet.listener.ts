@@ -30,11 +30,15 @@ export class WalletListener {
   // ─────────────────────────────────────────────────────────────────────────
   @OnEvent(WALLET_BALANCE_CHANGED)
   async handleBalanceChanged(event: WalletBalanceChangedEvent): Promise<void> {
-    this.logger.warn(
-      `Balance changed for ${event.address}: ${event.previousBalance} → ${event.currentBalance}`,
-    );
-    const payload = JSON.stringify(event);
-    await this.redis.lpush(ALERTS_KEY, payload);
-    await this.redis.ltrim(ALERTS_KEY, 0, MAX_ALERTS - 1);
+    try {
+      this.logger.warn(
+        `Balance changed for ${event.address}: ${event.previousBalance} → ${event.currentBalance}`,
+      );
+      const payload = JSON.stringify(event);
+      await this.redis.lpush(ALERTS_KEY, payload);
+      await this.redis.ltrim(ALERTS_KEY, 0, MAX_ALERTS - 1);
+    } catch (error) {
+      this.logger.error(`Failed to persist alert for ${event.address}`, error);
+    }
   }
 }
