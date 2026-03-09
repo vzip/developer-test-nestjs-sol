@@ -102,6 +102,32 @@ import { isValidSolanaAddress } from '../utils/address.utils';
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface WatchlistEntry {
+  readonly address: string;
+  readonly label?: string;
+  readonly addedAt: number;
+}
+
+interface ParsedTransferInfo {
+  readonly source?: string;
+  readonly destination?: string;
+  readonly lamports?: number | string;
+}
+
+interface MoralisSplToken {
+  readonly mint?: string;
+  readonly name?: string;
+  readonly symbol?: string;
+  readonly amount?: string;
+  readonly decimals?: number;
+}
+
+interface MetaplexNftResult {
+  readonly mintAddress?: { toBase58(): string };
+  readonly name?: string;
+  readonly symbol?: string;
+}
+
 const CACHE_KEYS = {
   balance: (address: string) => `balance:${address}`,
   transactions: (address: string, limit: number) => `txs:${address}:${limit}`,
@@ -110,14 +136,14 @@ const CACHE_KEYS = {
   lastBalance: (address: string) => `last_balance:${address}`,
   watchlist: 'watchlist',
   alerts: 'wallet:alerts',
-};
+} as const;
 
 const CACHE_TTL = {
-  balance: 30,      // seconds
-  transactions: 60, // seconds
-  tokens: 120,      // seconds
-  nfts: 300,        // seconds
-};
+  balance: 30,
+  transactions: 60,
+  tokens: 120,
+  nfts: 300,
+} as const;
 
 @Injectable()
 export class WalletService {
@@ -239,14 +265,14 @@ export class WalletService {
 
           const instructions = parsed.transaction.message.instructions;
           for (const ix of instructions) {
-            if ('parsed' in ix && ix.parsed?.type === 'transfer') {
-              const info = ix.parsed.info;
-              transactions[i].from = info.source ?? address;
-              transactions[i].to = info.destination ?? '';
-              transactions[i].value = formatBalance(
-                Number(info.lamports ?? 0),
-                this.sol.decimals,
-              );
+          if ('parsed' in ix && ix.parsed?.type === 'transfer') {
+            const info = ix.parsed.info as ParsedTransferInfo;
+            transactions[i].from = info.source ?? address;
+            transactions[i].to = info.destination ?? '';
+            transactions[i].value = formatBalance(
+              String(info.lamports ?? '0'),
+              this.sol.decimals,
+            );
               break;
             }
           }
@@ -321,7 +347,7 @@ export class WalletService {
       const all = await this.redis.hgetall(CACHE_KEYS.watchlist);
       if (!all || Object.keys(all).length === 0) return [];
 
-      const wallets = Object.values(all).map((v) => JSON.parse(v));
+      const wallets: WatchlistEntry[] = Object.values(all).map((v) => JSON.parse(v));
 
       const settled = await Promise.allSettled(
         wallets.map(async (w) => {
@@ -422,7 +448,7 @@ export class WalletService {
         network: 'mainnet',
       });
 
-      const tokens: TokenBalance[] = (res?.raw ?? []).map((item: any) => ({
+      const tokens: TokenBalance[] = (res?.raw ?? []).map((item: MoralisSplToken) => ({
         contractAddress: item.mint ?? '',
         name: item.name ?? '',
         symbol: item.symbol ?? '',
@@ -474,7 +500,7 @@ export class WalletService {
     try {
       const nfts = await this.metaplex.sdk.nfts().findAllByOwner({ owner: pk });
 
-      const items: NftItem[] = nfts.map((nft: any) => ({
+      const items: NftItem[] = nfts.map((nft: MetaplexNftResult) => ({
         mint: nft.mintAddress?.toBase58() ?? '',
         name: nft.name ?? '',
         symbol: nft.symbol ?? '',
