@@ -26,7 +26,7 @@ describe('WalletListener', () => {
 
   describe('handleBalanceChanged', () => {
     const event: WalletBalanceChangedEvent = {
-      address: 'vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg',
+      address: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
       network: 'solana',
       symbol: 'SOL',
       previousBalance: '1.000000',

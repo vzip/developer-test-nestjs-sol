@@ -12,7 +12,7 @@ import { MoralisProvider } from '../blockchain/providers/moralis.provider';
 import { MetaplexProvider } from '../blockchain/providers/metaplex.provider';
 import { WALLET_BALANCE_CHANGED } from './events/wallet-balance-changed.event';
 
-const VALID_ADDRESS = 'vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg';
+const VALID_ADDRESS = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
 const INVALID_ADDRESS = 'not-a-valid-solana-address';
 
 const mockRedis = {
@@ -347,7 +347,7 @@ describe('WalletService', () => {
 
     it('should skip failed wallets and return the rest', async () => {
       const goodAddr = VALID_ADDRESS;
-      const badAddr = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+      const badAddr = 'vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg';
       mockRedis.hgetall.mockResolvedValue({
         [goodAddr]: JSON.stringify({ address: goodAddr, label: 'Good', addedAt: 1 }),
         [badAddr]: JSON.stringify({ address: badAddr, label: 'Bad', addedAt: 2 }),
