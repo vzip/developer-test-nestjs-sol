@@ -171,6 +171,63 @@ export class WalletService {
     return new PublicKey(address);
   }
 
+  private static readonly TX_CHUNK_SIZE = 2;
+  private static readonly TX_CHUNK_DELAY_MS = 400;
+
+  /** Enrich basic signature data with parsed transfer details; stops on first rate-limit hit */
+  private async enrichTransactions(
+    transactions: Transaction[],
+    signatures: { signature: string }[],
+    address: string,
+  ): Promise<void> {
+    const sigs = signatures.map((s) => s.signature);
+
+    for (let i = 0; i < sigs.length; i += WalletService.TX_CHUNK_SIZE) {
+      const chunk = sigs.slice(i, i + WalletService.TX_CHUNK_SIZE);
+
+      try {
+        const parsedTxs = await this.sol.connection.getParsedTransactions(
+          chunk,
+          { maxSupportedTransactionVersion: 0 },
+        );
+
+        parsedTxs.forEach((parsed, j) => {
+          if (!parsed) return;
+          const idx = i + j;
+
+          const preBalance = parsed.meta?.preBalances?.[0] ?? 0;
+          const postBalance = parsed.meta?.postBalances?.[0] ?? 0;
+          const diff = Math.abs(preBalance - postBalance);
+          transactions[idx].value = formatBalance(diff, this.sol.decimals);
+
+          const instructions = parsed.transaction.message.instructions;
+          for (const ix of instructions) {
+            if ('parsed' in ix && ix.parsed?.type === 'transfer') {
+              const info = ix.parsed.info as ParsedTransferInfo;
+              transactions[idx].from = info.source ?? address;
+              transactions[idx].to = info.destination ?? '';
+              transactions[idx].value = formatBalance(
+                String(info.lamports ?? '0'),
+                this.sol.decimals,
+              );
+              break;
+            }
+          }
+        });
+      } catch {
+        this.logger.warn(
+          `Rate-limited at chunk [${i}..${i + chunk.length - 1}], ` +
+          `returning basic data for remaining ${sigs.length - i} transactions`,
+        );
+        return;
+      }
+
+      if (i + WalletService.TX_CHUNK_SIZE < sigs.length) {
+        await new Promise((r) => setTimeout(r, WalletService.TX_CHUNK_DELAY_MS));
+      }
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // TODO: Implement balance fetching
   //
@@ -250,33 +307,7 @@ export class WalletService {
       }));
 
       if (signatures.length > 0) {
-        const parsedTxs = await this.sol.connection.getParsedTransactions(
-          signatures.map((s) => s.signature),
-          { maxSupportedTransactionVersion: 0 },
-        );
-
-        parsedTxs.forEach((parsed, i) => {
-          if (!parsed) return;
-
-          const preBalance = parsed.meta?.preBalances?.[0] ?? 0;
-          const postBalance = parsed.meta?.postBalances?.[0] ?? 0;
-          const diff = Math.abs(preBalance - postBalance);
-          transactions[i].value = formatBalance(diff, this.sol.decimals);
-
-          const instructions = parsed.transaction.message.instructions;
-          for (const ix of instructions) {
-          if ('parsed' in ix && ix.parsed?.type === 'transfer') {
-            const info = ix.parsed.info as ParsedTransferInfo;
-            transactions[i].from = info.source ?? address;
-            transactions[i].to = info.destination ?? '';
-            transactions[i].value = formatBalance(
-              String(info.lamports ?? '0'),
-              this.sol.decimals,
-            );
-              break;
-            }
-          }
-        });
+        await this.enrichTransactions(transactions, signatures, address);
       }
 
       const result: TransactionList = {
