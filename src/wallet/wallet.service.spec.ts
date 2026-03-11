@@ -28,7 +28,7 @@ const mockRedis = {
 const mockConnection = {
   getBalance: jest.fn(),
   getSignaturesForAddress: jest.fn(),
-  getParsedTransactions: jest.fn(),
+  getParsedTransaction: jest.fn(),
 };
 
 const mockSol = {
@@ -163,27 +163,26 @@ describe('WalletService', () => {
           err: null,
         },
       ]);
-      mockConnection.getParsedTransactions.mockResolvedValue([
-        {
-          meta: { preBalances: [2_000_000_000], postBalances: [1_000_000_000] },
-          transaction: {
-            message: {
-              instructions: [
-                {
-                  parsed: {
-                    type: 'transfer',
-                    info: {
-                      source: 'senderAddr',
-                      destination: VALID_ADDRESS,
-                      lamports: 1_000_000_000,
-                    },
+      mockConnection.getParsedTransaction.mockResolvedValue({
+        meta: { preBalances: [2_000_000_000], postBalances: [1_000_000_000] },
+        transaction: {
+          message: {
+            accountKeys: [{ pubkey: { toBase58: () => 'senderAddr' } }],
+            instructions: [
+              {
+                parsed: {
+                  type: 'transfer',
+                  info: {
+                    source: 'senderAddr',
+                    destination: VALID_ADDRESS,
+                    lamports: 1_000_000_000,
                   },
                 },
-              ],
-            },
+              },
+            ],
           },
         },
-      ]);
+      });
 
       const result = await service.getTransactions(VALID_ADDRESS, 1);
 
@@ -203,7 +202,7 @@ describe('WalletService', () => {
       const result = await service.getTransactions(VALID_ADDRESS);
 
       expect(result.transactions).toHaveLength(0);
-      expect(mockConnection.getParsedTransactions).not.toHaveBeenCalled();
+      expect(mockConnection.getParsedTransaction).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException for invalid address', async () => {

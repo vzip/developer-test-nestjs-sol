@@ -171,59 +171,71 @@ export class WalletService {
     return new PublicKey(address);
   }
 
-  private static readonly TX_CHUNK_SIZE = 2;
-  private static readonly TX_CHUNK_DELAY_MS = 400;
+  private static readonly TX_ENRICH_DELAY_MS = 5000;
+  private static readonly MAX_ENRICH_COUNT = 10;
 
-  /** Enrich basic signature data with parsed transfer details; stops on first rate-limit hit */
+  private enrichFromParsed(
+    tx: Transaction,
+    parsed: { transaction: { message: { accountKeys: { pubkey: { toBase58(): string } }[]; instructions: unknown[] } }; meta?: { preBalances?: number[]; postBalances?: number[] } | null },
+    address: string,
+  ): void {
+    const accountKeys = parsed.transaction.message.accountKeys;
+    const signerKey = accountKeys[0]?.pubkey?.toBase58() ?? address;
+
+    const preBalance = parsed.meta?.preBalances?.[0] ?? 0;
+    const postBalance = parsed.meta?.postBalances?.[0] ?? 0;
+    const diff = Math.abs(preBalance - postBalance);
+    tx.value = formatBalance(diff, this.sol.decimals);
+    tx.from = signerKey;
+
+    const instructions = parsed.transaction.message.instructions as Array<
+      { parsed?: { type?: string; info?: ParsedTransferInfo } }
+    >;
+    for (const ix of instructions) {
+      if (ix.parsed?.type === 'transfer') {
+        const info = ix.parsed.info as ParsedTransferInfo;
+        tx.from = info.source ?? signerKey;
+        tx.to = info.destination ?? '';
+        tx.value = formatBalance(
+          String(info.lamports ?? '0'),
+          this.sol.decimals,
+        );
+        break;
+      }
+    }
+
+    if (!tx.to) {
+      tx.to = accountKeys.length > 1
+        ? accountKeys[1]?.pubkey?.toBase58() ?? ''
+        : '';
+    }
+  }
+
   private async enrichTransactions(
     transactions: Transaction[],
     signatures: { signature: string }[],
     address: string,
   ): Promise<void> {
-    const sigs = signatures.map((s) => s.signature);
+    const count = Math.min(signatures.length, WalletService.MAX_ENRICH_COUNT);
 
-    for (let i = 0; i < sigs.length; i += WalletService.TX_CHUNK_SIZE) {
-      const chunk = sigs.slice(i, i + WalletService.TX_CHUNK_SIZE);
-
+    for (let i = 0; i < count; i++) {
       try {
-        const parsedTxs = await this.sol.connection.getParsedTransactions(
-          chunk,
+        const parsed = await this.sol.connection.getParsedTransaction(
+          signatures[i].signature,
           { maxSupportedTransactionVersion: 0 },
         );
-
-        parsedTxs.forEach((parsed, j) => {
-          if (!parsed) return;
-          const idx = i + j;
-
-          const preBalance = parsed.meta?.preBalances?.[0] ?? 0;
-          const postBalance = parsed.meta?.postBalances?.[0] ?? 0;
-          const diff = Math.abs(preBalance - postBalance);
-          transactions[idx].value = formatBalance(diff, this.sol.decimals);
-
-          const instructions = parsed.transaction.message.instructions;
-          for (const ix of instructions) {
-            if ('parsed' in ix && ix.parsed?.type === 'transfer') {
-              const info = ix.parsed.info as ParsedTransferInfo;
-              transactions[idx].from = info.source ?? address;
-              transactions[idx].to = info.destination ?? '';
-              transactions[idx].value = formatBalance(
-                String(info.lamports ?? '0'),
-                this.sol.decimals,
-              );
-              break;
-            }
-          }
-        });
-      } catch {
-        this.logger.warn(
-          `Rate-limited at chunk [${i}..${i + chunk.length - 1}], ` +
-          `returning basic data for remaining ${sigs.length - i} transactions`,
-        );
-        return;
+        if (parsed) {
+          this.enrichFromParsed(transactions[i], parsed, address);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const is429 = msg.includes('429');
+        this.logger.warn(`Enrich tx ${i}/${count} failed: ${msg}`);
+        if (is429) return;
       }
 
-      if (i + WalletService.TX_CHUNK_SIZE < sigs.length) {
-        await new Promise((r) => setTimeout(r, WalletService.TX_CHUNK_DELAY_MS));
+      if (i + 1 < count) {
+        await new Promise((r) => setTimeout(r, WalletService.TX_ENRICH_DELAY_MS));
       }
     }
   }
