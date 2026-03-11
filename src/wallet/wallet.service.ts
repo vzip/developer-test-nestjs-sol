@@ -171,8 +171,9 @@ export class WalletService {
     return new PublicKey(address);
   }
 
-  private static readonly TX_ENRICH_DELAY_MS = 5000;
-  private static readonly MAX_ENRICH_COUNT = 10;
+  private static readonly TX_DELAY_MS = 5000;
+  private static readonly BACKOFF_MS = 10000;
+  private static readonly TIMEOUT_MS = 5 * 60 * 1000;
 
   private enrichFromParsed(
     tx: Transaction,
@@ -216,26 +217,40 @@ export class WalletService {
     signatures: { signature: string }[],
     address: string,
   ): Promise<void> {
-    const count = Math.min(signatures.length, WalletService.MAX_ENRICH_COUNT);
+    const deadline = Date.now() + WalletService.TIMEOUT_MS;
 
-    for (let i = 0; i < count; i++) {
-      try {
-        const parsed = await this.sol.connection.getParsedTransaction(
-          signatures[i].signature,
-          { maxSupportedTransactionVersion: 0 },
-        );
-        if (parsed) {
-          this.enrichFromParsed(transactions[i], parsed, address);
+    for (let i = 0; i < signatures.length; i++) {
+      let enriched = false;
+
+      while (!enriched && Date.now() < deadline) {
+        try {
+          const parsed = await this.sol.connection.getParsedTransaction(
+            signatures[i].signature,
+            { maxSupportedTransactionVersion: 0 },
+          );
+          if (parsed) {
+            this.enrichFromParsed(transactions[i], parsed, address);
+          }
+          enriched = true;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Enrich tx ${i}/${signatures.length} 429, backing off`);
+
+          if (Date.now() + WalletService.BACKOFF_MS >= deadline) {
+            this.logger.warn(`Timeout approaching, stopping at tx ${i}`);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, WalletService.BACKOFF_MS));
         }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const is429 = msg.includes('429');
-        this.logger.warn(`Enrich tx ${i}/${count} failed: ${msg}`);
-        if (is429) return;
       }
 
-      if (i + 1 < count) {
-        await new Promise((r) => setTimeout(r, WalletService.TX_ENRICH_DELAY_MS));
+      if (!enriched) {
+        this.logger.warn(`Timeout reached at tx ${i}/${signatures.length}`);
+        return;
+      }
+
+      if (i + 1 < signatures.length) {
+        await new Promise((r) => setTimeout(r, WalletService.TX_DELAY_MS));
       }
     }
   }
